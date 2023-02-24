@@ -19,108 +19,28 @@ import subprocess
 
 from fuzzers import utils
 
-# This command doesn't work in Dockerfile
-subprocess.run([
-    'pip3',
-    'install',
-    'gtirb',
-], check=True)
 
-import gtirb  #pylint: disable=wrong-import-position, wrong-import-order
-
-
-def parse_libs(lib):
-    """
-        Given a library name, transforms it to be used as linker flag.
-
-        Parameters
-        ----------
-        lib : str
-
-        Returns
-        -------
-        result : str
-
-        Examples
-        --------
-        >>> parse_libs('libpthread.so.0')
-        '-lpthread'
-
-    """
-    lib_name = lib.split('.', 1)[0]
-    if 'lib' in lib_name[:3]:
-        result = '-l' + lib_name[3:]
-    else:
-        raise ValueError('Invalid library name')
-    return result
-
-
-def extract_libs(target_gtirb):
-    """
-        Given a gtirb file name, returns the libraries that the original binary
-        depends on.
-
-        Parameters
-        ----------
-        target_gtirb : str
-
-        Returns
-        -------
-        result : list
-
-        Examples
-        --------
-        >>> extract_libs('file.gtirb')
-        ['-lmagic', '-lc', '-llzma', '-lbz2', '-lz']
-
-    """
-    gtirb_ir = gtirb.IR.load_protobuf(target_gtirb)
-    libs = gtirb_ir.modules[0].aux_data['libraries'].data
-    result = []
-    for i in libs:
-        result.append(parse_libs(i))
-    return result
-
-
-def create_assembler(target_gtirb):
-    """
-        Given a gtirb file name, returns the shell script required to assemble
-        the assembly source file with instrumentation.
-
-        Parameters
-        ----------
-        target_gtirb : str
-
-        Returns
-        -------
-        text : str
-
-    """
-    tab, period, letter_s = '\t', r'\.', r'\s'
-    backslash = chr(92)
-    text = f"""#!/bin/bash
-#
-# Run afl-as to assemble with AFL instrumentation.
-#
+def create_assembler():
+    tab = r'\t'
+    text = f'''#!/bin/bash
 set -ex
 
-SOURCE=$(readlink -f $1); shift
-TARGET=$(readlink -f $1); shift
+# Compiler arguments: -o ftfuzzer.dafl /tmp/fileSsXP4m.s -ldl -lm -lgcc_s -lpthread -lc -no-pie -nostartfiles
+SOURCE=$3
+TARGET=$2
 
-AS_FLAGS=$(echo $TARGET | grep -q 'results/x86{period}' && echo "--32" ||echo "")
+AS_FLAGS=$(echo $TARGET | grep -q 'results/x86\.' && echo "--32" ||echo "")
 
-sed 's/^{period}text$/{tab}.text/' -i $SOURCE
-sed 's/^{letter_s}{backslash}{{1,{backslash}}}/{tab}/' -i $SOURCE
+sed 's/^\.text$/{tab}.text/' -i $SOURCE
+sed 's/^\s\{{1,\}}/{tab}/' -i $SOURCE
 
 temp_dir=$(mktemp -d)
 pushd $temp_dir
-AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /src/afl/afl-as $AS_FLAGS $SOURCE
-gcc -no-pie a.out $@ -o $TARGET {' '.join(extract_libs(target_gtirb))}
-
+AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /afl/afl-as $AS_FLAGS $SOURCE
+gcc -no-pie $@ -o $TARGET
 popd
 rm -r $temp_dir
-    
-"""
+'''
     return text
 
 
@@ -156,7 +76,6 @@ def instrument_binary():
     # Name initialisation
     target_binary = os.getenv('FUZZ_TARGET')
     target_gtirb = target_binary + '.gtirb'
-    target_assembly = target_binary + '.s'
     instrumented_binary = target_binary + '.dafl'
 
     # ddisasm pipeline
@@ -167,23 +86,26 @@ def instrument_binary():
         target_gtirb,
     ],
                    check=True)
+
+    # os.environ['AFL_AS_FORCE_INSTRUMENT'] = '1'
+    # os.environ['AFL_KEEP_ASSEMBLY'] = '1'
+    assembler = '/src/fuzzers/aflplusplus_ddisasm/assemble.sh'
+    with open(assembler, mode='w', encoding='utf-8') as file:
+        file.write(create_assembler())
+    os.chmod(assembler, 0o777)
+    
     subprocess.run([
         'gtirb-pprinter',
         target_gtirb,
         '--syntax',
         'att',
-        '--asm',
-        target_assembly,
+        # '--skip-symbol', '__afl_area_ptr', '--skip-symbol', '__afl_prev_loc',
+        '--binary',
+        '/src/'+instrumented_binary,
+        '--use-gcc', assembler
     ],
                    check=True)
 
-    assembler = '/src/fuzzers/aflplusplus_ddisasm/assemble.sh'
-    with open(assembler, mode='w', encoding='utf-8') as file:
-        file.write(create_assembler(target_gtirb))
-
-    os.chmod(assembler, 0o777)
-    subprocess.run([assembler, target_assembly, instrumented_binary],
-                   check=True)
     shutil.copy(instrumented_binary, os.environ['OUT'])
 
 
@@ -193,7 +115,7 @@ def build():
     """
     build_uninstrumented_benchmark()
     instrument_binary()
-    shutil.copy('/src/afl/afl-fuzz', os.environ['OUT'])
+    shutil.copy('/afl/afl-fuzz', os.environ['OUT'])
 
 
 def prepare_fuzz_environment(input_corpus):
@@ -214,6 +136,7 @@ def prepare_fuzz_environment(input_corpus):
     os.environ['AFL_SKIP_CRASHES'] = '1'
     # Shuffle the queue
     os.environ['AFL_SHUFFLE_QUEUE'] = '1'
+    # os.environ['AFL_SKIP_BIN_CHECK'] = '1'
     # AFL needs at least one non-empty seed to start.
     utils.create_seed_file_for_empty_corpus(input_corpus)
 
