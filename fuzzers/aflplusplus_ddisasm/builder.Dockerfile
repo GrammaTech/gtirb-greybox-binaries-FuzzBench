@@ -58,12 +58,9 @@ RUN cd /src/afl && \
 
 
 RUN wget -O - https://download.grammatech.com/gtirb/files/apt-repo/conf/apt.gpg.key | apt-key add -
-RUN echo "deb https://download.grammatech.com/gtirb/files/apt-repo focal stable"| tee -a /etc/apt/sources.list
+RUN echo "deb https://download.grammatech.com/gtirb/files/apt-repo focal unstable"| tee -a /etc/apt/sources.list
 
 RUN apt-get update && apt-get install -y libgtirb gtirb-pprinter ddisasm
-
-RUN pip3 install --upgrade pip
-RUN pip3 install gtirb
 
 
 # docker build -f builder.Dockerfile -t aflplusplus_ddisasm .
