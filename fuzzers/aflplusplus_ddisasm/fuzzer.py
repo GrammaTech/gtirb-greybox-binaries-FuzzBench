@@ -21,7 +21,18 @@ from fuzzers import utils
 
 
 def create_assembler():
-    tab = r'\t'
+    """
+        Returns the shell script required to assemble the assembly source file
+        with instrumentation.
+
+        Returns
+        -------
+        text : str
+
+    """
+    # For fixing lint failures
+    tab, period, letter_s = r'\t', r'\.', r'\s'
+    backslash = chr(92)
     text = f'''#!/bin/bash
 set -ex
 
@@ -29,15 +40,14 @@ set -ex
 SOURCE=$3
 TARGET=$2
 
-AS_FLAGS=$(echo $TARGET | grep -q 'results/x86\.' && echo "--32" ||echo "")
+AS_FLAGS=$(echo $TARGET | grep -q 'results/x86{period}' && echo "--32" ||echo "")
 
-sed 's/^\.text$/{tab}.text/' -i $SOURCE
-sed 's/^\s\{{1,\}}/{tab}/' -i $SOURCE
+sed 's/^{period}text$/{tab}.text/' -i $SOURCE
+sed 's/^{letter_s}{backslash}{{1,{backslash}}}/{tab}/' -i $SOURCE
 
 temp_dir=$(mktemp -d)
 pushd $temp_dir
-AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /afl/afl-as $AS_FLAGS $SOURCE
-gcc -no-pie $@ -o $TARGET
+AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /src/afl/afl-gcc -no-pie $AS_FLAGS ${{@}}
 popd
 rm -r $temp_dir
 '''
@@ -87,22 +97,14 @@ def instrument_binary():
     ],
                    check=True)
 
-    # os.environ['AFL_AS_FORCE_INSTRUMENT'] = '1'
-    # os.environ['AFL_KEEP_ASSEMBLY'] = '1'
     assembler = '/src/fuzzers/aflplusplus_ddisasm/assemble.sh'
     with open(assembler, mode='w', encoding='utf-8') as file:
         file.write(create_assembler())
     os.chmod(assembler, 0o777)
-    
+
     subprocess.run([
-        'gtirb-pprinter',
-        target_gtirb,
-        '--syntax',
-        'att',
-        # '--skip-symbol', '__afl_area_ptr', '--skip-symbol', '__afl_prev_loc',
-        '--binary',
-        '/src/'+instrumented_binary,
-        '--use-gcc', assembler
+        'gtirb-pprinter', target_gtirb, '--syntax', 'att', '--binary',
+        '/src/' + instrumented_binary, '--use-gcc', assembler
     ],
                    check=True)
 
@@ -115,7 +117,7 @@ def build():
     """
     build_uninstrumented_benchmark()
     instrument_binary()
-    shutil.copy('/afl/afl-fuzz', os.environ['OUT'])
+    shutil.copy('/src/afl/afl-fuzz', os.environ['OUT'])
 
 
 def prepare_fuzz_environment(input_corpus):
@@ -136,7 +138,6 @@ def prepare_fuzz_environment(input_corpus):
     os.environ['AFL_SKIP_CRASHES'] = '1'
     # Shuffle the queue
     os.environ['AFL_SHUFFLE_QUEUE'] = '1'
-    # os.environ['AFL_SKIP_BIN_CHECK'] = '1'
     # AFL needs at least one non-empty seed to start.
     utils.create_seed_file_for_empty_corpus(input_corpus)
 
