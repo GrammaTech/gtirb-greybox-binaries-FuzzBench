@@ -30,26 +30,17 @@ def create_assembler():
         text : str
 
     """
-    # For fixing lint failures
-    tab, period, letter_s = r'\t', r'\.', r'\s'
-    backslash = chr(92)
-    text = f'''#!/bin/bash
+    text = '''#!/bin/bash
 set -ex
 
-# Compiler arguments: -o ftfuzzer.dafl /tmp/fileSsXP4m.s -ldl -lm -lgcc_s -lpthread -lc -no-pie -nostartfiles
 SOURCE=$3
-TARGET=$2
 
-AS_FLAGS=$(echo $TARGET | grep -q 'results/x86{period}' && echo "--32" ||echo "")
+# Add tab before .text and substitute space indentation for tabs to allow instrumentation
+sed 's/^\.text$/\\t.text/' -i $SOURCE
+sed 's/^\s\\{1,\\}/\\t/' -i $SOURCE
 
-sed 's/^{period}text$/{tab}.text/' -i $SOURCE
-sed 's/^{letter_s}{backslash}{{1,{backslash}}}/{tab}/' -i $SOURCE
 
-temp_dir=$(mktemp -d)
-pushd $temp_dir
-AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /src/afl/afl-gcc -no-pie $AS_FLAGS ${{@}}
-popd
-rm -r $temp_dir
+AFL_AS_FORCE_INSTRUMENT=1 AFL_KEEP_ASSEMBLY=1 /src/afl/afl-gcc $@
 '''
     return text
 
@@ -104,11 +95,9 @@ def instrument_binary():
 
     subprocess.run([
         'gtirb-pprinter', target_gtirb, '--syntax', 'att', '--binary',
-        '/src/' + instrumented_binary, '--use-gcc', assembler
+        os.environ['OUT'] +"/"+ instrumented_binary, '--use-gcc', assembler
     ],
                    check=True)
-
-    shutil.copy(instrumented_binary, os.environ['OUT'])
 
 
 def build():
